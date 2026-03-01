@@ -32,10 +32,11 @@ pip3 install pdfminer.six pymupdf openpyxl
 ## Использование
 
 ```
-/review-homework
+/review-homework          # основной workflow (оценка работ)
+/review-homework model    # управление vision-моделью OpenRouter
 ```
 
-Skill проведёт через 7 шагов:
+Skill проведёт через 7 шагов (+ Шаг 0 — проверка конфига OpenRouter):
 
 1. Вставьте текст задания
 2. Укажите путь к лекциям
@@ -66,6 +67,50 @@ review-homework-skill/
 └── examples/
     └── .gitkeep            # Примеры выходных файлов
 ```
+
+## OpenRouter Integration (Vision API)
+
+Для image-only PDF (сканы, Canva без текстового слоя) skill может использовать бесплатные vision-модели через OpenRouter вместо Claude vision. Это значительно экономит токены — base64 изображения не попадают в контекст Claude.
+
+### Настройка
+
+```
+/review-homework model
+```
+
+Команда покажет список бесплатных vision-моделей OpenRouter. Выберите модель и введите API-ключ.
+
+### Получение API-ключа
+
+1. Зарегистрируйтесь на [openrouter.ai](https://openrouter.ai)
+2. Перейдите в [Keys](https://openrouter.ai/keys)
+3. Создайте новый ключ
+
+### Конфигурация
+
+Конфиг хранится в `~/.claude/skills/review-homework/config.json` (не в git):
+
+```json
+{
+  "openrouter_api_key": "sk-or-v1-...",
+  "vision_model": "google/gemma-3-27b-it:free",
+  "vision_model_name": "Google: Gemma 3 27B (free)"
+}
+```
+
+### Fallback chain
+
+```
+PDF → pdfminer.six text extraction
+  ├─ TEXT_OK → use text
+  └─ NEED_VISION → render PNGs (pymupdf)
+       → OpenRouter vision API (free model)
+           ├─ VISION_OK → use extracted text
+           ├─ VISION_PARTIAL → OpenRouter text + Claude vision for failed pages
+           └─ VISION_FAIL / NO_CONFIG → Claude vision (Read tool)
+```
+
+Без настройки OpenRouter skill работает как раньше — Claude vision через Read tool.
 
 ## PDF Processing
 

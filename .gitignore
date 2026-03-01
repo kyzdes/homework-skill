@@ -1,5 +1,6 @@
 .DS_Store
 *.xlsx
+config.json
 
 # Lecture PDFs (large files, not part of the skill)
 homework_*/lections/
