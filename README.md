@@ -21,10 +21,11 @@ cp SKILL.md ~/.claude/skills/review-homework/SKILL.md
 ### Зависимости
 
 ```bash
-# macOS
-brew install poppler  # для pdftotext и pdftoppm
-pip3 install openpyxl  # для генерации Excel (или установится автоматически)
+pip3 install pymupdf openpyxl
 ```
+
+> `pymupdf` — извлечение текста из PDF (заменяет `pdftotext`/`pdftoppm`, лучше работает с кириллицей и презентациями).
+> `openpyxl` — генерация Excel-отчёта.
 
 ## Использование
 
@@ -66,13 +67,13 @@ review-homework-skill/
 
 ## PDF Processing
 
-Skill автоматически определяет тип PDF:
+Skill использует PyMuPDF для извлечения текста из PDF:
 
-1. Попытка извлечения текста через `pdftotext`
-2. Проверка качества — подсчёт кириллических символов
-3. Если кириллицы < 30% или текст < 50 символов → fallback на `pdftoppm` + Claude vision
+1. Извлечение текстовых блоков через `pymupdf` с сортировкой по позиции (корректный порядок чтения для презентаций)
+2. Проверка качества — наличие кириллических символов
+3. Если текст не извлекается (image-based PDF) → fallback на PyMuPDF рендеринг + Claude vision
 
-Это позволяет обрабатывать как текстовые PDF, так и image-based презентации (например, экспорт из Canva, скриншоты).
+Большинство студенческих PDF (Google Slides, PowerPoint) содержат текстовый слой — vision не нужен. Fallback срабатывает только для сканов и Canva с нестандартными шрифтами.
 
 ## Excel-отчёт
 

@@ -45,12 +45,19 @@ ls -la "<путь_к_лекциям>"
 ```
 
 2. Для каждой лекции (PDF):
-   - Извлеки контент через vision (лекции часто содержат схемы и изображения):
+   - Сначала попробуй текстовое извлечение через PyMuPDF (тем же скриптом что в Шаге 5.2)
+   - Если текст извлёкся (STATUS: TEXT_OK) — используй его
+   - Если лекция содержит важные схемы и диаграммы, которые нужно увидеть визуально, дополнительно конвертируй нужные страницы в изображения:
 ```bash
-mkdir -p /tmp/lecture_images_$$
-pdftoppm -png -r 200 "<pdf_path>" /tmp/lecture_images_$$/page
+python3 -c "
+import pymupdf
+doc = pymupdf.open('<pdf_path>')
+for i, page in enumerate(doc):
+    pix = page.get_pixmap(dpi=200)
+    pix.save(f'/tmp/lecture_images_$$/page-{i+1:03d}.png')
+"
 ```
-   - Прочитай каждую страницу через Read tool (vision)
+   - Прочитай изображения через Read tool (vision) только для страниц со схемами
    - Выдели ключевые концепции, фреймворки, метрики, термины
 
 3. На основе анализа лекций и задания создай файл методологии `metodology_<hw_name>.md` в той же папке, где лежит задание.
@@ -133,34 +140,78 @@ ls -la "<путь_к_работам>"
 
 ### Шаг 5. Извлечение контента из PDF
 
-Для каждого PDF-файла используй следующий алгоритм:
+Для каждого PDF-файла используй следующий алгоритм. Основной инструмент — PyMuPDF (pymupdf), который лучше pdftotext работает с презентациями (корректный порядок текстовых блоков) и кириллицей.
 
-#### 5.1 Попытка текстового извлечения
-
-```bash
-pdftotext "<PDF_PATH>" /tmp/work_text_$$.txt
-```
-
-#### 5.2 Проверка качества текста
+#### 5.1 Установка зависимости (один раз)
 
 ```bash
-# Подсчёт кириллических символов
-CYRILLIC_CHARS=$(grep -oP '[\p{Cyrillic}]' /tmp/work_text_$$.txt 2>/dev/null | wc -l)
-TOTAL_CHARS=$(wc -c < /tmp/work_text_$$.txt 2>/dev/null)
-echo "Cyrillic: $CYRILLIC_CHARS / Total: $TOTAL_CHARS"
+pip3 install pymupdf -q
 ```
 
-#### 5.3 Решение о методе извлечения
+#### 5.2 Текстовое извлечение через PyMuPDF
 
-- **Если** кириллицы >= 30% от общего текста И общий текст >= 50 символов → используй текстовое извлечение
-- **Иначе** → переходи на vision fallback:
+Для каждого PDF запусти:
+
+```bash
+python3 << 'EXTRACT_SCRIPT'
+import pymupdf
+import re
+import sys
+import os
+
+pdf_path = "<PDF_PATH>"
+output_path = "/tmp/work_text_$$.txt"
+
+doc = pymupdf.open(pdf_path)
+all_text = []
+
+for page_num, page in enumerate(doc):
+    blocks = page.get_text("blocks", sort=True)
+    slide_lines = []
+    for block in blocks:
+        x0, y0, x1, y1, text, block_no, block_type = block
+        if block_type == 0:  # текстовый блок
+            slide_lines.append(text.strip())
+    slide_text = "\n".join(slide_lines)
+    all_text.append(f"--- Слайд {page_num + 1} ---\n{slide_text}")
+
+full_text = "\n\n".join(all_text)
+
+# Проверка качества: есть ли кириллица?
+cyrillic_count = len(re.findall(r'[\u0400-\u04FF]', full_text))
+total_len = len(full_text.strip())
+
+with open(output_path, 'w', encoding='utf-8') as f:
+    f.write(full_text)
+
+print(f"Slides: {len(doc)} | Chars: {total_len} | Cyrillic: {cyrillic_count}")
+if total_len >= 50 and cyrillic_count >= total_len * 0.1:
+    print("STATUS: TEXT_OK")
+else:
+    print("STATUS: NEED_VISION")
+EXTRACT_SCRIPT
+```
+
+#### 5.3 Решение о методе
+
+- **Если STATUS: TEXT_OK** → прочитай `/tmp/work_text_$$.txt` через Read tool. Текстовое извлечение сработало.
+- **Если STATUS: NEED_VISION** → PDF не содержит извлекаемого текста (image-based, Canva с растровыми шрифтами и т.д.). Используй vision fallback:
 
 ```bash
 mkdir -p /tmp/pdf_images_$$
-pdftoppm -png -r 200 "<PDF_PATH>" /tmp/pdf_images_$$/page
+python3 -c "
+import pymupdf
+doc = pymupdf.open('<PDF_PATH>')
+for i, page in enumerate(doc):
+    pix = page.get_pixmap(dpi=200)
+    pix.save(f'/tmp/pdf_images_$$/page-{i+1:03d}.png')
+print(f'Exported {len(doc)} pages')
+"
 ```
 
 Затем прочитай каждую страницу как изображение через Read tool (Claude vision). Собери весь текст и описания визуальных элементов.
+
+На практике большинство студенческих PDF (Google Slides, PowerPoint) содержат текстовый слой и vision не понадобится. Vision fallback нужен только для PDF, экспортированных как изображения (Canva с нестандартными шрифтами, сканы).
 
 #### 5.4 Сохрани извлечённый контент
 
