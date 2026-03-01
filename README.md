@@ -21,11 +21,13 @@ cp SKILL.md ~/.claude/skills/review-homework/SKILL.md
 ### Зависимости
 
 ```bash
-pip3 install pymupdf openpyxl
+pip3 install pdfminer.six pymupdf openpyxl
 ```
 
-> `pymupdf` — извлечение текста из PDF (заменяет `pdftotext`/`pdftoppm`, лучше работает с кириллицей и презентациями).
+> `pdfminer.six` — основной инструмент извлечения текста из PDF (корректно обрабатывает ToUnicode CMap и Type3 шрифты из Figma/Canva экспорта).
+> `pymupdf` — проверка наличия шрифтов в PDF + рендеринг страниц в PNG для vision fallback.
 > `openpyxl` — генерация Excel-отчёта.
+> Скрипты автоматически устанавливают недостающие пакеты при запуске.
 
 ## Использование
 
@@ -67,13 +69,14 @@ review-homework-skill/
 
 ## PDF Processing
 
-Skill использует PyMuPDF для извлечения текста из PDF:
+Skill использует `pdfminer.six` для извлечения текста и `pymupdf` для вспомогательных операций:
 
-1. Извлечение текстовых блоков через `pymupdf` с сортировкой по позиции (корректный порядок чтения для презентаций)
-2. Проверка качества — наличие кириллических символов
-3. Если текст не извлекается (image-based PDF) → fallback на PyMuPDF рендеринг + Claude vision
+1. `pymupdf` — быстрая проверка: есть ли шрифты в PDF? (0 шрифтов = image-only → сразу vision)
+2. `pdfminer.six` `extract_text()` — основное извлечение текста (корректно обрабатывает ToUnicode CMap и Type3 шрифты из Figma/Canva экспорта)
+3. Проверка качества — наличие кириллических символов
+4. Если текст не извлекается (image-only PDF) → fallback на PyMuPDF рендеринг страниц в PNG + Claude vision
 
-Большинство студенческих PDF (Google Slides, PowerPoint) содержат текстовый слой — vision не нужен. Fallback срабатывает только для сканов и Canva с нестандартными шрифтами.
+Большинство студенческих PDF (Google Slides, PowerPoint, Figma) содержат текстовый слой — vision не нужен. Fallback срабатывает только для сканов и image-only PDF.
 
 ## Excel-отчёт
 

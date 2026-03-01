@@ -45,12 +45,17 @@ ls -la "<путь_к_лекциям>"
 ```
 
 2. Для каждой лекции (PDF):
-   - Сначала попробуй текстовое извлечение через PyMuPDF (тем же скриптом что в Шаге 5.2)
+   - Сначала попробуй текстовое извлечение тем же скриптом что в Шаге 5.1 (pdfminer.six + pymupdf проверка шрифтов)
    - Если текст извлёкся (STATUS: TEXT_OK) — используй его
    - Если лекция содержит важные схемы и диаграммы, которые нужно увидеть визуально, дополнительно конвертируй нужные страницы в изображения:
 ```bash
 python3 -c "
-import pymupdf
+try:
+    import pymupdf
+except ImportError:
+    import subprocess, sys
+    subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'pymupdf', '-q'])
+    import pymupdf
 doc = pymupdf.open('<pdf_path>')
 for i, page in enumerate(doc):
     pix = page.get_pixmap(dpi=200)
@@ -140,67 +145,84 @@ ls -la "<путь_к_работам>"
 
 ### Шаг 5. Извлечение контента из PDF
 
-Для каждого PDF-файла используй следующий алгоритм. Основной инструмент — PyMuPDF (pymupdf), который лучше pdftotext работает с презентациями (корректный порядок текстовых блоков) и кириллицей.
+Для каждого PDF-файла используй следующий алгоритм. Основной инструмент — `pdfminer.six`, который корректно обрабатывает ToUnicode CMap и Type3 шрифты (Figma, Canva экспорт). PyMuPDF используется только для быстрой проверки наличия шрифтов и рендеринга страниц в PNG при vision fallback.
 
-#### 5.1 Установка зависимости (один раз)
-
-```bash
-pip3 install pymupdf -q
-```
-
-#### 5.2 Текстовое извлечение через PyMuPDF
+#### 5.1 Текстовое извлечение через pdfminer.six
 
 Для каждого PDF запусти:
 
 ```bash
 python3 << 'EXTRACT_SCRIPT'
+import subprocess, sys, re, os
+
+# --- auto-install missing packages ---
+for pkg, import_name in [("pdfminer.six", "pdfminer"), ("pymupdf", "pymupdf")]:
+    try:
+        __import__(import_name)
+    except ImportError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", pkg, "-q"])
+
 import pymupdf
-import re
-import sys
-import os
+from pdfminer.high_level import extract_text
 
 pdf_path = "<PDF_PATH>"
 output_path = "/tmp/work_text_$$.txt"
 
+# Phase 1: pymupdf quick check — does the PDF have fonts?
 doc = pymupdf.open(pdf_path)
-all_text = []
+has_fonts = False
+for page in doc:
+    if page.get_fonts():
+        has_fonts = True
+        break
+num_pages = len(doc)
+doc.close()
 
-for page_num, page in enumerate(doc):
-    blocks = page.get_text("blocks", sort=True)
-    slide_lines = []
-    for block in blocks:
-        x0, y0, x1, y1, text, block_no, block_type = block
-        if block_type == 0:  # текстовый блок
-            slide_lines.append(text.strip())
-    slide_text = "\n".join(slide_lines)
-    all_text.append(f"--- Слайд {page_num + 1} ---\n{slide_text}")
-
-full_text = "\n\n".join(all_text)
-
-# Проверка качества: есть ли кириллица?
-cyrillic_count = len(re.findall(r'[\u0400-\u04FF]', full_text))
-total_len = len(full_text.strip())
-
-with open(output_path, 'w', encoding='utf-8') as f:
-    f.write(full_text)
-
-print(f"Slides: {len(doc)} | Chars: {total_len} | Cyrillic: {cyrillic_count}")
-if total_len >= 50 and cyrillic_count >= total_len * 0.1:
-    print("STATUS: TEXT_OK")
-else:
+if not has_fonts:
+    print(f"Slides: {num_pages} | Fonts: 0 — image-only PDF")
     print("STATUS: NEED_VISION")
+else:
+    # Phase 2: pdfminer.six for actual text extraction
+    raw = extract_text(pdf_path)
+    # Split into pages (pdfminer uses form-feed \x0c as page separator)
+    pages = raw.split('\x0c')
+    all_text = []
+    for i, page_text in enumerate(pages):
+        text = page_text.strip()
+        if text:
+            all_text.append(f"--- Слайд {i + 1} ---\n{text}")
+
+    full_text = "\n\n".join(all_text)
+
+    # Validate: check Cyrillic count
+    cyrillic_count = len(re.findall(r'[\u0400-\u04FF]', full_text))
+    total_len = len(full_text.strip())
+
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(full_text)
+
+    print(f"Slides: {num_pages} | Chars: {total_len} | Cyrillic: {cyrillic_count}")
+    if total_len >= 50 and cyrillic_count >= total_len * 0.1:
+        print("STATUS: TEXT_OK")
+    else:
+        print("STATUS: NEED_VISION")
 EXTRACT_SCRIPT
 ```
 
-#### 5.3 Решение о методе
+#### 5.2 Решение о методе
 
 - **Если STATUS: TEXT_OK** → прочитай `/tmp/work_text_$$.txt` через Read tool. Текстовое извлечение сработало.
-- **Если STATUS: NEED_VISION** → PDF не содержит извлекаемого текста (image-based, Canva с растровыми шрифтами и т.д.). Используй vision fallback:
+- **Если STATUS: NEED_VISION** → PDF не содержит извлекаемого текста (image-only, Canva с растровыми шрифтами и т.д.). Используй vision fallback:
 
 ```bash
 mkdir -p /tmp/pdf_images_$$
 python3 -c "
-import pymupdf
+try:
+    import pymupdf
+except ImportError:
+    import subprocess, sys
+    subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'pymupdf', '-q'])
+    import pymupdf
 doc = pymupdf.open('<PDF_PATH>')
 for i, page in enumerate(doc):
     pix = page.get_pixmap(dpi=200)
@@ -211,9 +233,9 @@ print(f'Exported {len(doc)} pages')
 
 Затем прочитай каждую страницу как изображение через Read tool (Claude vision). Собери весь текст и описания визуальных элементов.
 
-На практике большинство студенческих PDF (Google Slides, PowerPoint) содержат текстовый слой и vision не понадобится. Vision fallback нужен только для PDF, экспортированных как изображения (Canva с нестандартными шрифтами, сканы).
+На практике большинство студенческих PDF (Google Slides, PowerPoint) содержат текстовый слой и vision не понадобится. Vision fallback нужен для image-only PDF (сканы) или когда pdfminer не может извлечь кириллицу.
 
-#### 5.4 Сохрани извлечённый контент
+#### 5.3 Сохрани извлечённый контент
 
 Для каждой работы сохрани:
 - Имя файла (оно же имя студента/команды)
@@ -506,6 +528,6 @@ PYTHON_SCRIPT
 2. **Справедливость**: Оценивай все работы по одним критериям. Не завышай и не занижай.
 3. **Конкретика**: Комментарии должны содержать конкретные примеры из работ, а не общие фразы.
 4. **Калибровка**: Первый проход (обзор) нужен для калибровки — чтобы одинаковый уровень получал одинаковую оценку.
-5. **PDF processing**: Всегда сначала пробуй pdftotext. Vision fallback использует pdftoppm для конвертации страниц в изображения.
+5. **PDF processing**: Используй `pdfminer.six` для извлечения текста (корректно обрабатывает Type3 шрифты и ToUnicode CMap). PyMuPDF — только для проверки наличия шрифтов и рендеринга страниц в PNG при vision fallback.
 6. **Контекст лекций**: При оценке применения знаний (К3) сверяйся с ключевыми концепциями из методологии.
 7. **Порог не зачтено**: Средний балл < 4.0 ИЛИ любой из 3 критериев < 3 = "Не зачтено".
