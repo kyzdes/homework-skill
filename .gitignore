@@ -1,0 +1,9 @@
+.DS_Store
+*.xlsx
+
+# Lecture PDFs (large files, not part of the skill)
+homework_*/lections/
+
+# Student work PDFs (private data)
+homework_*/students work/
+homework_*/students_work/
